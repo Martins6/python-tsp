@@ -69,7 +69,6 @@ def solve_tsp_grasp(
         3. Repeat step 2 until all neighbors of `x` are tried and there is no
         improvement. Return `x`, `fx` as solution.
     """
-    x, fx = setup(distance_matrix, x0)
     max_processing_time = max_processing_time or np.inf
     if log_file:
         fh = logging.FileHandler(log_file)
@@ -78,7 +77,6 @@ def solve_tsp_grasp(
         logger.setLevel(logging.INFO)
 
     tic = default_timer()
-    
     best_Tour = []
     i = 0
     while i <= max_iterations:
@@ -119,6 +117,11 @@ def constructive_phase(
     for _ in range(distance_matrix.shape[0] - 1):
         min_index = get_maxmin_index_from_row(distance_matrix, Tour[-1], Tour[0:-1], 'min')
         max_index = get_maxmin_index_from_row(distance_matrix, Tour[-1], Tour[0:-1], 'max')
+        
+        f_min = distance_matrix[Tour[-1]][min_index]
+        f_max = distance_matrix[Tour[-1]][max_index]
+        
+        LRC = 
     
     # We must always return to the same city.
     Tour.append(start)
