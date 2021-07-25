@@ -2,12 +2,10 @@
 import logging
 from random import sample
 from timeit import default_timer
-from typing import List, Optional, Tuple, Callable
+from typing import List, Optional, Tuple
 
 import numpy as np
 
-from python_tsp.utils import compute_permutation_distance
-from python_tsp.heuristics.perturbation_schemes import neighborhood_gen
 from python_tsp.heuristics.local_search import solve_tsp_local_search
 
 # Testing
@@ -25,7 +23,7 @@ def solve_tsp_grasp(
     start_position: int = 0,
     alpha: float = 0.5,
     perturbation_scheme: str = "two_opt",
-    max_iterations: int = 100, 
+    max_iterations: int = 1, 
     max_processing_time: Optional[float] = None,
     log_file: Optional[str] = None,
 ) -> Tuple[List, float]:
@@ -77,56 +75,54 @@ def solve_tsp_grasp(
         logger.setLevel(logging.INFO)
 
     tic = default_timer()
-    best_Tour = []
+    best_Tour = setup(distance_matrix, None)[0]
     i = 0
     while i <= max_iterations:
-        constructive_phase(distance_matrix, alpha, compute_permutation_distance)
+        intial_Tour = constructive_phase(distance_matrix, alpha, start_position)
+        optimized_Tour = solve_tsp_local_search(distance_matrix, intial_Tour,
+                                                perturbation_scheme, max_processing_time)[0]
         
+        f_best_tour = compute_permutation_distance(best_Tour, distance_matrix)
+        f_optimized_tour = compute_permutation_distance(optimized_Tour, distance_matrix)
         
+        if f_best_tour > f_optimized_tour:
+            best_Tour = optimized_Tour
+            logger.info(f"Current value: {f_optimized_tour}; Neighbor: {optimized_Tour}")
         
-        i + 1
-    
-    # stop_early = False
-    # improvement = True
-    # while improvement and (not stop_early):
-    #     improvement = False
-    #     for n_index, xn in enumerate(neighborhood_gen[perturbation_scheme](x)):
-    #         if default_timer() - tic > max_processing_time:
-    #             logger.warning("Stopping early due to time constraints")
-    #             stop_early = True
-    #             break
+        if default_timer() - tic > max_processing_time:
+            logger.warning("Stopping early due to time constraints")
+            i = max_iterations + 1
+            break
+        
+        i += 1
+    return best_Tour, compute_permutation_distance(best_Tour, distance_matrix)
 
-    #         fn = compute_permutation_distance(distance_matrix, xn)
-    #         logger.info(f"Current value: {fx}; Neighbor: {n_index}")
-
-    #         if fn < fx:
-    #             improvement = True
-    #             x, fx = xn, fn
-    #             break  # early stop due to first improvement local search
-    
-    return x, fx
 
 def constructive_phase(
     distance_matrix: np.ndarray,
     alpha: float,
-    objective_function: Callable,
     start: int = 0
 ) -> List:    
     Tour = [start]
     
     for _ in range(distance_matrix.shape[0] - 1):
-        min_index = get_maxmin_index_from_row(distance_matrix, Tour[-1], Tour[0:-1], 'min')
-        max_index = get_maxmin_index_from_row(distance_matrix, Tour[-1], Tour[0:-1], 'max')
+        min_index = get_maxmin_index_from_row(distance_matrix, Tour[-1], Tour, 'min')
+        max_index = get_maxmin_index_from_row(distance_matrix, Tour[-1], Tour, 'max')
         
         f_min = distance_matrix[Tour[-1]][min_index]
         f_max = distance_matrix[Tour[-1]][max_index]
         
-        LRC = 
-    
-    # We must always return to the same city.
-    Tour.append(start)
+        # List of Restrict Candidates = LRC
+        LRC_index = np.array(range(len(distance_matrix[Tour[-1]])))
+        
+        LRC_condition = distance_matrix[Tour[-1]] <= f_min + alpha*(f_max - f_min)
+        LRC_condition[Tour[-1]] = False
+        LRC_index = LRC_index[LRC_condition]
+        
+        new_city_index = np.random.choice(LRC_index, 1, replace=False)[0]
+        Tour.append(new_city_index)
 
-    return np.array(Tour)
+    return Tour
 
 def get_maxmin_index_from_row(
     distance_matrix: np.ndarray,
@@ -138,18 +134,52 @@ def get_maxmin_index_from_row(
     We adjust the row array in order to never get the "previous_indexes" list of indexes.
     """
     distance_matrix = distance_matrix.copy()
-    arr = distance_matrix[row]
+    arr = distance_matrix[row].astype(float)
+    
+    aux_list = range(arr.shape[0])
+    aux_list_2 = []
+    for i in aux_list:
+        if i in previous_indexes:
+            aux_list_2.append(True)
+        else:
+            aux_list_2.append(False)
+    previous_indexes_bool = aux_list_2
+    
     if type == 'max':
-        arr[previous_indexes] = -1
-        target_index = np.argmax(distance_matrix[row])
+        arr[previous_indexes_bool] = -1
+        target_index = np.argmax(arr)
     if type == 'min':
-        arr[previous_indexes] = np.Inf
-        target_index = np.argmin(distance_matrix[row])
-    target_index = target_index[0] if len(target_index) > 1 else target_index
-    print(target_index)
+        arr[previous_indexes_bool] = np.Inf
+        target_index = np.argmin(arr)
     
     return target_index
 
+
+def compute_permutation_distance(
+    Tour: np.array,
+    dist_matrix: np.array
+) -> float:
+    """
+    Given an array of indexes, calculate the distance through the
+    distance matrix.
+    Args:
+        Tour (np.array): array of indexes
+        dist_matrix (np.array): 2-d array of distance values
+    Returns:
+        float: total distance of the Tour.
+    """
+    Tour = Tour[0:-1]
+    d = 0
+    for i in range(len(Tour)):
+        city_index = Tour[i]
+        # The TSP always begin and end in the same city. When
+        # in the last city in the tour go back to the start.
+        try:
+            next_city_index = Tour[i + 1]
+        except IndexError:
+            next_city_index = Tour[0]
+        d += dist_matrix[city_index][next_city_index]
+    return d
 
 def setup(
     distance_matrix: np.ndarray, x0: Optional[List] = None
@@ -180,12 +210,17 @@ def setup(
         n = distance_matrix.shape[0]  # number of nodes
         x0 = [0] + sample(range(1, n), n - 1)  # ensure 0 is the first node
 
-    fx0 = compute_permutation_distance(distance_matrix, x0)
+    fx0 = compute_permutation_distance(x0, distance_matrix)
     return x0, fx0
 
 
 if __name__ == '__main__':
     tsplib_file = "tests/tsplib_data/a280.tsp"
     distance_matrix = tsplib_distance_matrix(tsplib_file)
-    print(distance_matrix)
+    print(solve_tsp_grasp(distance_matrix))
+    
+    
+    print(solve_tsp_local_search(distance_matrix))
+    
+    
         
